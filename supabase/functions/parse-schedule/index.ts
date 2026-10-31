@@ -1,5 +1,6 @@
 // 근무표 사진 → 날짜별 근무 코드.
-// Supabase 대시보드 → Edge Functions 에 "parse-schedule" 이름으로 이 파일 내용을 붙여넣어 배포해요.
+// Supabase 대시보드 → Edge Functions 에 "dynamic-api" 이름으로 배포돼 있어요 (앱은 data.js 에서 이 이름으로 불러요).
+// 코드를 고치면 그 함수의 Code 탭에 이 파일 내용을 다시 붙여넣고 Deploy 하세요.
 // 필요한 비밀값: ANTHROPIC_API_KEY (Edge Functions → Secrets)
 import Anthropic from "npm:@anthropic-ai/sdk";
 

@@ -108,11 +108,12 @@ const remote = {
   },
   async parseSchedule(req) {
     const c = await client();
-    const { data, error } = await c.functions.invoke('parse-schedule', { body: req });
+    // Supabase에 배포된 함수 이름 (코드: supabase/functions/parse-schedule/index.ts)
+    const { data, error } = await c.functions.invoke('dynamic-api', { body: req });
     if (error) {
       let msg = error.message;
       try { const j = await error.context.json(); if (j && j.error) msg = j.error; } catch (e) { /* 함수가 아직 배포 전이면 본문이 없어요 */ }
-      if (/Failed to send|not found|404/i.test(msg)) msg = '사진 인식 서버(parse-schedule)가 아직 준비되지 않았어요';
+      if (/Failed to send|not found|404/i.test(msg)) msg = '사진 인식 서버(dynamic-api)가 아직 준비되지 않았어요';
       throw new Error(msg);
     }
     return data;
