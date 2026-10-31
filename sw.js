@@ -2,7 +2,7 @@
 // 앱 파일은 "인터넷 먼저, 안 되면 저장본" → 고친 내용이 바로 반영돼요.
 // CDN 라이브러리는 버전이 고정돼 있어서 "저장본 먼저".
 // Supabase 데이터 요청은 건드리지 않아요.
-const CACHE = 'fwc-v1';
+const CACHE = 'fwc-v2';
 const SHELL = ['./', 'index.html', 'app.js', 'data.js', 'config.js', 'styles.css', 'manifest.webmanifest', 'icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {

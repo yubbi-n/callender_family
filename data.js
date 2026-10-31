@@ -106,6 +106,17 @@ const remote = {
     const c = await client();
     check(await c.rpc('reset_pin', { p_member: memberId, p_pin: pin }));
   },
+  async parseSchedule(req) {
+    const c = await client();
+    const { data, error } = await c.functions.invoke('parse-schedule', { body: req });
+    if (error) {
+      let msg = error.message;
+      try { const j = await error.context.json(); if (j && j.error) msg = j.error; } catch (e) { /* 함수가 아직 배포 전이면 본문이 없어요 */ }
+      if (/Failed to send|not found|404/i.test(msg)) msg = '사진 인식 서버(parse-schedule)가 아직 준비되지 않았어요';
+      throw new Error(msg);
+    }
+    return data;
+  },
   async signOut() {
     const c = await client();
     await c.rpc('leave_device');
@@ -263,6 +274,16 @@ const local = {
     Object.assign(me, patch);
     save(d);
     return later();
+  },
+  async parseSchedule({ year, month, codes }) {
+    // 체험 모드는 실제로 인식하지 않고, 화면 흐름만 볼 수 있게 그럴듯한 결과를 만들어요.
+    await new Promise((r) => setTimeout(r, 1600));
+    const list = codes.length ? codes.map((c) => c.code) : ['D', 'E', 'N', 'OFF'];
+    const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const days = Array.from({ length: last }, (_, i) => ({ day: i + 1, code: list[Math.floor(i / 2) % list.length] }));
+    const legend = list.map((code) => ({ code, count: days.filter((d) => d.code === code).length }));
+    legend[0].count += 1;
+    return { year, month, days, legend, note: '체험 모드라 실제 사진은 읽지 않았어요.' };
   },
   async resetPin(memberId, pin) {
     if (!/^\d{4}$/.test(pin || '')) throw new Error('PIN은 숫자 4자리예요');

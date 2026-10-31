@@ -126,6 +126,8 @@ const IconLock = ({ size = 12 }) => html`<${Svg} size=${size}><path d="M7 11V8a5
 const IconRepeat = () => html`<${Svg} size="16"><path d="M4 9a6 6 0 0 1 10-4l2 2M20 15a6 6 0 0 1-10 4l-2-2" /><path d="M16 3v4h-4M8 21v-4h4" /><//>`;
 const IconEdit = () => html`<${Svg}><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M13 7l4 4" /><//>`;
 const IconCal = ({ size = 28 }) => html`<${Svg} size=${size}><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /><//>`;
+const IconPhoto = ({ size = 20 }) => html`<${Svg} size=${size}><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="M21 16l-5-5-9 9" /><//>`;
+const IconWarn = () => html`<${Svg}><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" /><//>`;
 const IconGear = () => html`<${Svg} size="22" sw="1.8"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /><//>`;
 
 // 한글 입력용. value 를 매번 다시 넣으면 조합 중인 글자가 두 번 들어가서, 입력 중에는 DOM 값을 그대로 둬요.
@@ -732,6 +734,40 @@ function Settings({ ctx, close }) {
 
 // ───────────────────────── 내 근무 입력 ─────────────────────────
 
+// 휴대폰 캡처는 크기가 커서, 긴 변 1568px JPEG로 줄여서 보내요 (Claude가 읽는 최대 해상도와 같아요).
+async function shrinkImage(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, bad) => {
+      const i = new Image();
+      i.onload = () => ok(i);
+      i.onerror = () => bad(new Error('사진을 열 수 없어요. JPG나 PNG 사진으로 올려주세요'));
+      i.src = url;
+    });
+    const k = Math.min(1, 1568 / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * k);
+    c.height = Math.round(img.naturalHeight * k);
+    const g = c.getContext('2d');
+    g.fillStyle = '#FFFFFF';
+    g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(img, 0, 0, c.width, c.height);
+    return { image: c.toDataURL('image/jpeg', 0.9).split(',')[1], media_type: 'image/jpeg' };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+const stripCode = (c) => ({ code: c.code, name: c.name, start_time: c.start_time, end_time: c.end_time, is_off: c.is_off });
+// 사진에서 처음 나온 코드는 자주 쓰는 형태에 있으면 그 이름·시간으로 채워요.
+function guessCode(code) {
+  for (const k in PRESETS) {
+    const hit = PRESETS[k].find((c) => c.code === code);
+    if (hit) return { ...hit };
+  }
+  return { code, name: '', start_time: null, end_time: null, is_off: /^(OFF|휴|휴무|비번|O)$/i.test(code) };
+}
+
 function ShiftEntry({ start, P, me, codes, shifts, loadShifts, onCodes, onClose }) {
   const [ym, setYm] = useState(start);
   const [brush, setBrush] = useState(codes.length ? codes[0].code : null);
@@ -739,6 +775,35 @@ function ShiftEntry({ start, P, me, codes, shifts, loadShifts, onCodes, onClose 
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(null); // null | 'new' | 기존 코드
   const [form, setForm] = useState(null);
+  const [scanning, setScanning] = useState(false);
+  const [scan, setScan] = useState(null); // 마지막 사진 인식 결과 {y, m, legend, note, count, unknown}
+  const fileRef = useRef();
+
+  const pickPhoto = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    setScanning(true);
+    try {
+      const img = await shrinkImage(file);
+      const r = await api.parseSchedule({ ...img, year: ym.y, month: ym.m, codes: codes.map(stripCode) });
+      const y = r.year >= 2000 && r.year <= 2100 ? r.year : ym.y;
+      const m = r.month >= 1 && r.month <= 12 ? r.month : ym.m;
+      if (!r.days.length) throw new Error('근무 코드를 찾지 못했어요. 한 달 달력 화면을 올려주세요');
+      const unknown = [...new Set(r.days.map((d) => d.code))].filter((c) => !codes.some((x) => x.code === c));
+      if (unknown.length) await onCodes(codes.map(stripCode).concat(unknown.map(guessCode)));
+      const next = { ...edits };
+      r.days.forEach((d) => { next[iso(y, m, d.day)] = d.code; });
+      setEdits(next);
+      setYm({ y, m });
+      setBrush(r.days[0].code);
+      setScan({ y, m, legend: r.legend || [], note: r.note || '', count: r.days.length, unknown });
+    } catch (err) {
+      toast(err.message || String(err), true);
+    } finally {
+      setScanning(false);
+    }
+  };
 
   useEffect(() => { loadShifts(ym.y, ym.m).catch((e) => toast(e.message, true)); }, [ym.y, ym.m]);
   useEffect(() => { if (brush !== '' && !codes.some((c) => c.code === brush)) setBrush(codes.length ? codes[0].code : null); }, [codes]);
@@ -802,6 +867,42 @@ function ShiftEntry({ start, P, me, codes, shifts, loadShifts, onCodes, onClose 
     saveCodes(codes.filter((c) => c.code !== editing).map((c) => ({ code: c.code, name: c.name, start_time: c.start_time, end_time: c.end_time, is_off: c.is_off })));
   };
 
+  if (scanning) {
+    return html`
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:0 16px 96px">
+        <div style="position:relative;width:210px;height:300px;border-radius:16px;background:#FFFFFF;border:1px solid #E0E0E0;overflow:hidden;padding:16px;box-sizing:border-box">
+          <div style="height:12px;width:90px;background:#E5E5E5;border-radius:3px"></div>
+          <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin-top:18px">
+            ${Array.from({ length: 35 }, (_, i) => html`<span style=${'height:26px;border-radius:3px;background:' + ['#9CD0F5', '#F6A8D8', '#F8E58A', '#9EEDB0', '#E8E8E8'][(i * 7 + (i >> 2)) % 5] + (i < 4 ? ';opacity:0.4' : '')}></span>`)}
+          </div>
+          <div style=${'position:absolute;left:0;right:0;height:3px;background:' + P.d + ';animation:scan 1.2s ease-in-out infinite alternate'}></div>
+        </div>
+        <div style="font-size:17px;font-weight:700;margin-top:8px">근무 코드를 읽는 중…</div>
+        <div style="font-size:13px;color:#5E5E5E">날짜 칸과 범례를 확인하고 있어요. 10~30초쯤 걸려요</div>
+      </div>`;
+  }
+
+  let status = null;
+  if (scan && scan.y === ym.y && scan.m === ym.m) {
+    const got = {};
+    g.cells.forEach((c) => { if (!c.faded && value(c.iso)) got[value(c.iso)] = (got[value(c.iso)] || 0) + 1; });
+    const mism = scan.legend.filter((l) => (got[l.code] || 0) !== l.count);
+    const ok = scan.legend.length > 0 && mism.length === 0;
+    const bad = mism.length > 0;
+    const title = bad
+      ? '범례와 달라요: ' + mism.map((l) => { const df = (got[l.code] || 0) - l.count; return l.code + ' ' + Math.abs(df) + '개 ' + (df < 0 ? '부족' : '초과'); }).join(', ')
+      : ok ? scan.count + '일 모두 인식했어요' : scan.count + '일을 인식했어요';
+    status = html`
+      <div style=${'display:flex;flex-direction:column;gap:6px;padding:14px;border-radius:14px;background:' + (bad ? '#FFF0F0' : '#E7F4EE') + ';color:' + (bad ? '#D00000' : '#0E6B4F')}>
+        <div style="display:flex;gap:10px;align-items:center">${bad ? html`<${IconWarn} />` : html`<${IconCheck} size="20" />`}<span style="font-weight:700;font-size:14px">${title}</span></div>
+        <div style="font-size:12.5px;color:#3D3D3D;line-height:1.6">
+          ${scan.note && html`<div>${scan.note}</div>`}
+          ${scan.unknown.length > 0 && html`<div>처음 보는 코드 <b>${scan.unknown.join(', ')}</b>를 추가했어요. 아래 근무 코드 설정에서 시간을 확인해주세요.</div>`}
+          <div>틀린 칸은 근무를 고르고 눌러서 고친 뒤 저장하세요.</div>
+        </div>
+      </div>`;
+  }
+
   const brushBtn = (key, label, styleOn, styleOff) => {
     const on = brush === key;
     return html`<button aria-pressed=${on ? 'true' : 'false'} onClick=${() => setBrush(key)} style=${'height:40px;min-width:48px;padding:0 12px;border-radius:10px;font-size:14px;font-weight:700;' + (on ? styleOn : styleOff)}>${label}</button>`;
@@ -814,6 +915,15 @@ function ShiftEntry({ start, P, me, codes, shifts, loadShifts, onCodes, onClose 
         <h1 style="margin:0;font-size:18px;font-weight:700">내 근무 입력</h1>
       </div>
       <div style="flex:1;overflow-y:auto;padding:4px 16px 16px;display:flex;flex-direction:column;gap:12px">
+        <input ref=${fileRef} type="file" accept="image/*" onChange=${pickPhoto} style="display:none" />
+        ${status || html`
+          <button onClick=${() => fileRef.current.click()} style="display:flex;align-items:center;gap:12px;padding:14px;border:1.5px dashed #C7C7C7;border-radius:14px;background:#FFFFFF;text-align:left;color:#1F1F1F">
+            <span style=${'width:44px;height:44px;border-radius:22px;background:' + P.c + ';color:' + P.d + ';display:flex;align-items:center;justify-content:center;flex:none'}><${IconPhoto} /></span>
+            <span style="flex:1;display:flex;flex-direction:column;gap:2px">
+              <span style="font-size:15px;font-weight:700">근무표 사진으로 한 번에 입력</span>
+              <span style="font-size:12px;color:#5E5E5E;line-height:1.5">근무표 앱의 한 달 달력 화면을 캡처해서 올려주세요. 본인 근무만 보이는 화면이면 돼요.</span>
+            </span>
+          </button>`}
         ${codes.length > 0 && html`
           <div style="background:#FFFFFF;border:1px solid #E5E5E5;border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:10px">
             <div style="font-size:12.5px;color:#5E5E5E">근무를 고르고 날짜를 누르세요. 같은 근무를 한 번 더 누르면 지워져요.</div>
